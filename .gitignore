@@ -1,0 +1,7 @@
+# downloads, envs, weights, generated data
+workspace/
+runs/
+config.local.sh
+__pycache__/
+*.pyc
+*.blend1

@@ -1,0 +1,11 @@
+# Copy to config.local.sh and point at existing installs. Anything left out falls back to config.sh.
+# W2T_HOME=/data/w2t
+# BLENDER=/opt/blender-4.5.14-linux-x64/blender
+# PY_HY3D=/opt/conda/envs/hy3d/bin/python
+# PY_IMGEDIT=/opt/conda/envs/imgedit/bin/python
+# PY_WAN=/opt/conda/envs/wananimate/bin/python
+# HY3D_REPO=/data/Hunyuan3D-2.1
+# GAMERENDER_REPO=/data/gamerender-whitebox-bidirectional-inference
+# WAN_MODEL_DIR=/data/models/Wan2.2-Animate-2-14B
+# QWEN_EDIT_MODEL=/data/models/Qwen-Image-Edit-2511
+# HF_HOME=/data/hf_cache
