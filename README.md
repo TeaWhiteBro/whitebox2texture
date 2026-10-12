@@ -88,7 +88,7 @@ Vi's crates barely improve because the world model painted an extra pile of crat
 
 ```bash
 git clone https://github.com/TeaWhiteBro/whitebox2texture.git && cd whitebox2texture
-bash install/all.sh           # about an hour on a fast connection; ends with install/check.sh, which must print all ok
+bash install/all.sh           # ~10 min on the reference machine, mostly ~75 GB of downloads; ends with "all required components ok"
 ```
 
 `install/all.sh` checks the prerequisites above and then runs these steps (each can also be run on its own):
@@ -101,6 +101,8 @@ bash install/all.sh           # about an hour on a fast connection; ends with in
 | `install/03_wan.sh` | env `wananimate`, the shipped GameRender package's DiffSynth-Studio, Wan2.2-Animate-2-14B weights |
 | `install/04_imgedit.sh` | only with `WITH_IMGEDIT=1`: env `imgedit` and Qwen-Image-Edit-2511, needed only for `REF=seed` |
 | `install/check.sh` | checks every component, downloads nothing |
+
+This was tested from a fresh clone in an empty environment (new `HOME`, no conda on `PATH`, no Hugging Face token): Miniforge, both envs and every weight installed, and `check.sh` passed. Rerunning `all.sh` skips what is already there (2.5 min).
 
 - All paths live in `config.sh`. Each one can be overridden by an environment variable or in `config.local.sh` (see `config.local.sh.example`), e.g. to reuse components that are already installed.
 - `install/lock/*.txt` are `pip freeze` dumps of the reference environments, and the install scripts install those exact versions; the Python versions are pinned too.
