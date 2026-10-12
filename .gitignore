@@ -5,3 +5,6 @@ config.local.sh
 __pycache__/
 *.pyc
 *.blend1
+
+# gh writes its login here when HOME is unset; never commit it
+.config/

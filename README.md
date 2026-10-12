@@ -1,238 +1,244 @@
 # whitebox2texture
 
-**从白模视频到可用贴图**：先用 Blender 搭一个白模场景，渲染一段相机运动视频；再用世界模型把它生成成目标风格的视频（例如《双城之战》里的金克丝、蔚、凯特琳）；最后利用白模**已知的几何和相机**，把视频帧逐像素投影回每个道具的 UV（reproject），得到和视频外观一致的贴图。贴好的模型可以放回场景，也可以导出成 GLB。
+**From a white-box video to usable textures.** Build a white-box scene in Blender and render a camera-motion video. A world model turns it into a video in a target style, for example Jinx, Vi and Caitlyn from *Arcane*. Because the white box's **geometry and cameras are known**, every video frame can then be projected pixel by pixel back into each prop's UV space (reprojection). The result is a texture whose look matches the video. The textured models can go back into the scene or be exported as GLB.
 
 ![Jinx row](docs/arcane_jinx_row.gif)
 
-*左：白模输入。中：世界模型生成的视频。右：白模场景中只把商店、木箱、木桶换成从视频投影回来的贴图，人物仍是白模。*
+*Left: white-box input. Middle: world-model video. Right: the white-box scene with only the shop, crates and barrel swapped for textures reprojected from the video; the character is still the white-box mannequin.*
 
 ---
 
-## 目录
+## Contents
 
-- [流程](#流程)
-- [结果](#结果)
-- [环境要求](#环境要求)
-- [安装](#安装)
-- [复现 Arcane demo](#复现-arcane-demo)
-- [输出说明](#输出说明)
-- [哪些结果能逐位复现](#哪些结果能逐位复现)
-- [换成自己的场景和角色](#换成自己的场景和角色)
-- [脚本一览](#脚本一览)
-- [早期实验：小屋 demo](#早期实验小屋-demo)
-- [约定和已知限制](#约定和已知限制)
-- [第三方组件与许可](#第三方组件与许可)
+- [Pipeline](#pipeline)
+- [Results](#results)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Reproducing the Arcane demo](#reproducing-the-arcane-demo)
+- [Outputs](#outputs)
+- [What reproduces bit for bit](#what-reproduces-bit-for-bit)
+- [Using your own scene and characters](#using-your-own-scene-and-characters)
+- [Scripts](#scripts)
+- [Earlier experiment: the house demo](#earlier-experiment-the-house-demo)
+- [Conventions and known limitations](#conventions-and-known-limitations)
+- [Third-party components and licenses](#third-party-components-and-licenses)
 
-## 流程
+## Pipeline
 
 ```mermaid
 flowchart LR
-  A["Blender 白模场景<br/>build_street_scene.py"] -->|rgb / depth / mask / cameras.json / 道具 .obj| B["第 0 帧风格化<br/>Qwen-Image-Edit-2511"]
-  A -->|whitebox.mp4| C["世界模型<br/>Wan2.2-Animate-2-14B + 白模 LoRA"]
+  A["Blender white-box scene<br/>build_street_scene.py"] -->|rgb / depth / mask / cameras.json / prop .obj| B["Stylise frame 0<br/>Qwen-Image-Edit-2511"]
+  A -->|whitebox.mp4| C["World model<br/>Wan2.2-Animate-2-14B + white-box LoRA"]
   B -->|ref.png| C
-  C -->|81 帧视频| D["每个道具<br/>① 视频对齐白模（小道具）<br/>② 选参考帧，抠图<br/>③ Hunyuan3D-Paint 生成完整贴图打底<br/>④ 视频帧按相机投影回 UV 并融合"]
-  A -->|几何 + 相机| D
-  D --> E["放回场景渲染 / 转台 / GLB<br/>和视频算 masked L1"]
+  C -->|81-frame video| D["Per prop<br/>1. align video to white box (small props)<br/>2. pick a reference frame, cut it out<br/>3. Hunyuan3D-Paint base texture<br/>4. project video frames into UV and fuse"]
+  A -->|geometry + cameras| D
+  D --> E["Render back in the scene / turntables / GLB<br/>masked L1 against the video"]
 ```
 
-对每个道具来说：
+For each prop:
 
-1. **对齐**（`align_object.py`，只用于小道具）：世界模型画的小物体会偏离白模 5–30 px。先用 GrabCut 在视频里把物体分割出来（以白模 mask 为种子），再用 ECC 拟合每帧的 2D 仿射（白模像素 → 视频像素）。拟合结果要过合理性检查，不合格的帧从前后的好帧插值，否则保持恒等。
-2. **参考帧**（`make_ref.py`）：选物体最大、没被画面边缘切掉、也不挨着人物的一帧，抠出带 alpha 的正方形参考图，同时算出这一帧相机相对物体的方位角。
-3. **Hunyuan3D-Paint 2.1**（`hy3d_texture.py`）：输入白模 mesh 和参考图，生成一张完整的贴图，背面这类视频里看不到的地方也有。
-4. **投影**（`project_frames.py`）：取 11 帧，每个 texel 按已知相机投影到这些帧，用白模深度做遮挡测试，限定在腐蚀后的物体 mask 内，并排除人物周围 20 px。`VIEW_SELECT=patch` 让每个平面块只取一帧（最正对、对齐最好的那帧），避免多帧平均造成重影。被看到的 texel 用视频颜色；没被看到的保留 Hunyuan 的颜色，并做颜色统计匹配，接缝处羽化过渡。
+1. **Alignment** (`align_object.py`, small props only). The world model draws small objects 5–30 px away from where the white box puts them. GrabCut segments the object in the video, seeded with the white-box mask, and ECC then fits a 2D affine per frame (white-box pixel → video pixel). Each fit has to pass plausibility checks. Frames that fail are interpolated from the good frames around them; if there are none, the transform stays at identity.
+2. **Reference frame** (`make_ref.py`). Picks the frame where the object is largest, not clipped by the image border, and clear of the character. It cuts out a square reference image with alpha and computes the camera's azimuth relative to the object in that frame.
+3. **Hunyuan3D-Paint 2.1** (`hy3d_texture.py`). Takes the white-box mesh and the reference image and generates a complete texture, including the back and other faces the video never shows.
+4. **Projection** (`project_frames.py`). Every texel is projected into 11 frames with the known cameras and depth-tested against the white-box depth. Samples must fall inside the eroded object mask and more than 20 px from the character. With `VIEW_SELECT=patch`, each planar patch takes a single frame (the most frontal, best-aligned one), which avoids the ghosting that averaging several frames causes. Texels the video sees take the video colour. The rest keep Hunyuan's colour after a colour-statistics match, with a feathered blend at the seams.
 
-## 结果
+## Results
 
 ![3x3](docs/arcane_3x3.jpg)
 
-*每行一个角色。列依次为：白模渲染 | 世界模型视频 | 道具换成重投影贴图。*
+*One row per character. Columns: white-box render | world-model video | props swapped for reprojected textures.*
 
 ![turntables](docs/arcane_turntables.jpg)
 
-*每个道具的 360° 转台，三张贴图分别是：只用 Hunyuan、只用视频投影、两者融合。*
+*A 360° turntable of each prop with three textures: Hunyuan only, video projection only, and the two fused.*
 
-下表是道具在原相机下重新渲染后，和视频在物体 mask 内的 L1 误差（0–255，越低越好）。`pipelines/arcane_demo.sh` 会生成同样一张表（`runs/l1_table.md`）：
+The table gives the L1 error (0–255, lower is better) between the video and the props re-rendered from the original cameras, measured inside the object mask. `pipelines/arcane_demo.sh` writes the same table to `runs/l1_table.md`:
 
-| 角色 | 道具 | 只用 Hunyuan（lit） | + 视频投影（unlit） | 对齐后：Hunyuan / + 投影 | 被视频覆盖的 texel 比例 |
+| Character | Prop | Hunyuan only (lit) | + video projection (unlit) | Aligned: Hunyuan / + projection | Texels covered by the video |
 |---|---|---|---|---|---|
-| Jinx | 商店 | 39.0 | **10.1** | – | 25% |
-| Jinx | 木箱 | 19.9 | **12.4** | 19.2 / 13.1 | 33% |
-| Jinx | 木桶 | 38.4 | **21.6** | 41.8 / 17.0 | 46% |
-| Vi | 商店 | 44.2 | **14.6** | – | 25% |
-| Vi | 木箱 | 32.5 | **29.6** | 33.9 / 27.9 | 33% |
-| Vi | 木桶 | 23.9 | **16.7** | 20.8 / 14.1 | 46% |
-| Caitlyn | 商店 | 28.2 | **14.9** | – | 25% |
-| Caitlyn | 木箱 | 24.3 | **20.4** | 21.1 / 13.8 | 33% |
-| Caitlyn | 木桶 | 33.0 | **23.1** | 24.1 / 20.9 | 46% |
+| Jinx | shop | 39.0 | **10.1** | – | 25% |
+| Jinx | crates | 19.9 | **12.4** | 19.2 / 13.1 | 33% |
+| Jinx | barrel | 38.4 | **21.6** | 41.8 / 17.0 | 46% |
+| Vi | shop | 44.2 | **14.6** | – | 25% |
+| Vi | crates | 32.5 | **29.6** | 33.9 / 27.9 | 33% |
+| Vi | barrel | 23.9 | **16.7** | 20.8 / 14.1 | 46% |
+| Caitlyn | shop | 28.2 | **14.9** | – | 25% |
+| Caitlyn | crates | 24.3 | **20.4** | 21.1 / 13.8 | 33% |
+| Caitlyn | barrel | 33.0 | **23.1** | 24.1 / 20.9 | 46% |
 
-Vi 的木箱提升很小，是因为世界模型在那里额外画了一堆箱子和蔬菜，和白模对不上。拿白模视频本身当"生成视频"跑一遍整条流程（dry run），三个道具融合后的 L1 分别是 3.6 / 2.7 / 1.6，说明坐标链路本身是对的，剩下的误差主要来自生成视频和白模不一致。
+Vi's crates barely improve because the world model painted an extra pile of crates and vegetables there that the white box does not have. As a dry run, the whole pipeline was also run with the white-box video itself standing in for the generated video. The fused L1 for the three props was 3.6 / 2.7 / 1.6, which shows the coordinate chain is correct. The remaining error comes mostly from the generated video disagreeing with the white box.
 
-## 环境要求
+## Requirements
 
-- Linux x86_64 + NVIDIA GPU。参考机器是 8×H200 141 GB，驱动 595.71.05。每一步都只用单卡，世界模型实测占用约 43 GB 显存（自带 CPU offload）。显存不够跑 Qwen 时可以设 `IMGEDIT_OFFLOAD=1`。
-- **不需要 root**：所有东西都装在 `$W2T_HOME`（默认 `./workspace`）下面，不改系统 CUDA、PATH 或 shell 配置。conda 只用 `conda-forge` 和 `nvidia` 频道。
-- 一个 `conda`（Miniconda 即可），外加 `git` 和 `curl`。
-- 磁盘约 150 GB：
+- Linux x86_64 with an NVIDIA GPU. The reference machine has 8×H200 141 GB and driver 595.71.05. Every step uses a single GPU. The world model was measured at about 43 GB of VRAM (it has its own CPU offload). If Qwen does not fit in your VRAM, set `IMGEDIT_OFFLOAD=1`.
+- **No root needed.** Everything is installed under `$W2T_HOME` (default `./workspace`). The system CUDA, PATH and shell profile are never touched. Conda uses only the `conda-forge` and `nvidia` channels.
+- A `conda` (Miniconda is enough), plus `git` and `curl`.
+- About 150 GB of disk:
 
-| 组件 | 大小 | 用途 |
+| Component | Size | Used for |
 |---|---|---|
-| Blender 4.5.14 LTS | 1.2 GB | 白模搭建、渲染、GLB 导出 |
-| env `hy3d` + CUDA 12.4 toolkit 前缀 | 6.4 + 6.2 GB | Hunyuan3D-Paint，以及所有 CPU 侧步骤 |
-| Hunyuan3D-2.1 paint + DINOv2-giant + RealESRGAN | 15 GB | 贴图生成 |
-| env `wananimate` + Wan2.2-Animate-2-14B | 7.3 + 47 GB | 世界模型 |
-| GameRender 推理包（白模 LoRA） | 0.1 GB | 世界模型。**内部包，未公开**，见下文 |
-| env `imgedit` + Qwen-Image-Edit-2511（可选） | 7.2 + 54 GB | 只有重新生成第 0 帧时才需要 |
+| Blender 4.5.14 LTS | 1.2 GB | building the white box, rendering, GLB export |
+| env `hy3d` + CUDA 12.4 toolkit prefix | 6.4 + 6.2 GB | Hunyuan3D-Paint and every CPU-side step |
+| Hunyuan3D-2.1 paint + DINOv2-giant + RealESRGAN | 15 GB | texture generation |
+| env `wananimate` + Wan2.2-Animate-2-14B | 7.3 + 47 GB | world model |
+| GameRender inference package (white-box LoRA) | 0.1 GB | world model. **Internal, not public**; see below |
+| env `imgedit` + Qwen-Image-Edit-2511 (optional) | 7.2 + 54 GB | only needed to regenerate frame 0 |
 
-## 安装
+## Installation
 
 ```bash
 git clone <this repo> whitebox2texture && cd whitebox2texture
 
-# 可选：机器上已经装过某些组件时，指向已有路径
+# Optional: point at components that are already installed on this machine
 cp config.local.sh.example config.local.sh && vim config.local.sh
 
-bash install/00_blender.sh    # 官方 tarball，sha256 校验
-bash install/01_hy3d.sh       # 环境 + Hunyuan3D-2.1（固定 commit 82920d6）+ 编译两个 CUDA 扩展 + 权重
-bash install/02_imgedit.sh    # 可选：Qwen-Image-Edit-2511
-# 先把 GameRender 推理包解压到 workspace/third_party/gamerender-whitebox-bidirectional-inference（或在 config.local.sh 里设 GAMERENDER_REPO）
-bash install/03_wan.sh        # 环境 + Wan2.2-Animate-2-14B 权重
-bash install/check.sh         # 逐项检查，全部 ok 才往下走
+bash install/00_blender.sh    # official tarball, sha256-checked
+bash install/01_hy3d.sh       # env + Hunyuan3D-2.1 (pinned to commit 82920d6) + two CUDA extensions + weights
+bash install/02_imgedit.sh    # optional: Qwen-Image-Edit-2511
+# Unpack the GameRender inference package to workspace/third_party/gamerender-whitebox-bidirectional-inference first
+# (or set GAMERENDER_REPO in config.local.sh)
+bash install/03_wan.sh        # env + Wan2.2-Animate-2-14B weights
+bash install/check.sh         # checks every component; continue only when all are ok
 ```
 
-- 所有路径都集中在 `config.sh`，每一项都可以用环境变量或 `config.local.sh` 覆盖。
-- `install/lock/*.txt` 是参考环境的 `pip freeze`，安装脚本按这些精确版本安装。
-- **世界模型**用的是 GameRender 项目的推理包 `gamerender-whitebox-bidirectional-inference`（Wan2.2-Animate-2-14B 双向注意力底座，加上在"白模→渲染"配对数据上训练的 rank-32 LoRA `animate2_base_scene00/step-2000`）。这个包没有公开，需要向 GameRender 团队索取。也可以换成任何"白模视频 + 第 0 帧 → 风格视频"的模型，只要输出 `<style>/video/<name>_gen.mp4`（81 帧，832×480，和白模逐帧对齐）。后面的步骤只依赖这个文件。
-- `03_wan.sh` 会从 `Wan-AI/Wan2.2-Animate-14B` 额外下载一个 `Wan2.1_VAE.pth`。原因是 Animate-2 仓库里自带的 `vae.pth` 不是 GameRender loader 要的那个文件，DiffSynth 按哈希识别模型，用错了会报 `Cannot detect the model type`。
+- All paths live in `config.sh`. Each one can be overridden by an environment variable or in `config.local.sh`.
+- `install/lock/*.txt` are `pip freeze` dumps of the reference environments, and the install scripts install those exact versions.
+- **The world model** is the GameRender project's inference package `gamerender-whitebox-bidirectional-inference`: a Wan2.2-Animate-2-14B bidirectional-attention base plus a rank-32 LoRA, `animate2_base_scene00/step-2000`, trained on paired white-box → render data. The package is not public; ask the GameRender team for it. Any other "white-box video + frame 0 → styled video" model works as a replacement, as long as it writes `<style>/video/<name>_gen.mp4` (81 frames, 832×480, frame-aligned with the white box). Every later step depends only on that file.
+- `03_wan.sh` also downloads `Wan2.1_VAE.pth` from `Wan-AI/Wan2.2-Animate-14B`. The `vae.pth` shipped in the Animate-2 repo is not the file the GameRender loader expects. DiffSynth identifies models by hash, and the wrong file fails with `Cannot detect the model type`.
 
-## 复现 Arcane demo
+## Reproducing the Arcane demo
 
 ```bash
-pipelines/arcane_demo.sh 0 1 2     # 三个角色各占一张卡并行；只给一张卡就依次跑
+pipelines/arcane_demo.sh 0 1 2     # one GPU per character in parallel; with a single GPU they run one after another
 ```
 
-参考机器（H200）上每个角色的耗时：
+Time per character on the reference machine (H200):
 
-| 阶段 | 做什么 | 耗时 |
+| Stage | What it does | Time |
 |---|---|---|
-| `scene` | Blender 搭白模广场：跑动的人偶 + 跟拍相机（左右摆动 ±20°）+ 商店、木箱、木桶；81 帧，832×480，15 fps | ~1 min |
-| `edit` | Qwen-Image-Edit 把白模第 0 帧画成 Arcane 风格，seed 1–4 各出一张候选 | ~3 min |
-| `video` | 世界模型：40 步，cfg 3，seed 0 | ~10 min |
-| `texture` | 三个道具依次跑 对齐 → 参考帧 → Hunyuan（每个约 1 min）→ 投影；然后渲染、转台、L1 | ~30 min |
-| `compose` | `arcane_3x3.mp4`、每个角色一个 GLB、`l1_table.md` | ~1 min |
+| `scene` | Blender builds the white-box plaza: a running mannequin, a following camera (swinging ±20°), and the shop, crates and barrel; 81 frames, 832×480, 15 fps | ~1 min |
+| `edit` | Qwen-Image-Edit paints white-box frame 0 in the Arcane style, one candidate for each of seeds 1–4 | ~3 min |
+| `video` | world model: 40 steps, cfg 3, seed 0 | ~10 min |
+| `texture` | for each of the three props: align → reference frame → Hunyuan (about 1 min each) → projection; then renders, turntables, L1 | ~30 min |
+| `compose` | `arcane_3x3.mp4`, one GLB per character, `l1_table.md` | ~1 min |
 
-常用变量：
+Common variables:
 
 ```bash
-STYLES="jinx" pipelines/arcane_demo.sh 0                 # 只跑一个角色
-STAGES="texture compose" pipelines/arcane_demo.sh 0 1 2  # 只重跑后半段（前面的输出已经在 runs/ 里）
-REF=seed pipelines/arcane_demo.sh 0 1 2                  # 用重新生成的 Qwen 候选（按记录的 seed）当第 0 帧
-CYCLES_DEVICE=CPU BLENDER_THREADS=32 ...                 # 没有 RTX/OptiX 时用 CPU 渲染（慢，但结果一致）
-RUNS=/data/w2t_runs ...                                  # 换输出目录
+STYLES="jinx" pipelines/arcane_demo.sh 0                 # a single character
+STAGES="texture compose" pipelines/arcane_demo.sh 0 1 2  # rerun only the second half (earlier outputs already in runs/)
+REF=seed pipelines/arcane_demo.sh 0 1 2                  # use the regenerated Qwen candidate (recorded seed) as frame 0
+CYCLES_DEVICE=CPU BLENDER_THREADS=32 ...                 # render on CPU when there is no RTX/OptiX (slow, same result)
+RUNS=/data/w2t_runs ...                                  # a different output directory
 ```
 
-- **第 0 帧的选择**：每个角色生成了 4 个候选，最终用的是 Jinx seed 1、Vi seed 1、Caitlyn seed 4（记录在 `configs/street/<style>/seed`）。这些选中的帧也直接放在了 `configs/street/<style>/ref.png` 里。默认 `REF=shipped` 就用这几张，这样后面所有步骤的输入和原实验完全相同。`edit` 阶段照样会重新生成候选，方便对比。
+- **Choosing frame 0.** Each character got 4 candidates. The ones used are Jinx seed 1, Vi seed 1 and Caitlyn seed 4, recorded in `configs/street/<style>/seed`. The chosen frames also ship as `configs/street/<style>/ref.png`. The default `REF=shipped` uses them, so every later step sees exactly the inputs of the original experiment. The `edit` stage still regenerates the candidates for comparison.
   ![first frames](docs/arcane_first_frames.jpg)
 
-  *白模第 0 帧和三个选中的风格化第 0 帧。*
+  *White-box frame 0 and the three chosen stylised frames 0.*
 
-- **prompt**：图像编辑用 `configs/street/<style>/edit_prompt.txt`，世界模型用 `prompt_video.txt`，格式是"人物外观描述：…\n背景描述：…"，和 GameRender 训练数据一致。世界模型的参考 prompt 写在 `arcane_demo.sh` 里，是 `白盒渲染的游戏画面，完整呈现场景的几何布局与遮挡关系，画面中的角色在移动，相机视角持续变化。`
+- **Prompts.** The image edit uses `configs/street/<style>/edit_prompt.txt` (English). The world model takes two prompts. Both are in Chinese, following the prompt format of Wan2.2-Animate-2-14B's official examples and the GameRender README, and they are kept verbatim so the results reproduce:
+  - `prompt_video.txt` uses the "character appearance: … / background: …" format.
+  - `configs/street/prompt_ref.txt` describes the white-box reference video and is copied into each run directory. The house demo uses `configs/prompt_ref.txt`, which drops the moving character.
 
-## 输出说明
+  Every Chinese prompt has an English translation next to it (`*.en.txt`), for reference only; the pipeline never reads them.
+
+## Outputs
 
 ```
 runs/
-├── street_v1/                    白模场景
-│   ├── rgb/####.png  depth/####.exr（平面深度）  mask_{shop,crates,barrel,character}/####.png
-│   ├── cameras.json              每帧 c2w（Blender 相机，看向 -Z）+ 针孔内参
-│   ├── shop.obj crates.obj barrel.obj   世界坐标，带 UV
+├── street_v1/                    white-box scene
+│   ├── rgb/####.png  depth/####.exr (planar depth)  mask_{shop,crates,barrel,character}/####.png
+│   ├── cameras.json              per-frame c2w (Blender camera, looks down -Z) + pinhole intrinsics
+│   ├── shop.obj crates.obj barrel.obj   world coordinates, with UVs
 │   ├── scene.blend  whitebox.mp4
 ├── arcane_<style>/
-│   ├── edit/candidate_seed{1..4}.png    ref.png（给世界模型的第 0 帧）
-│   ├── video/street_gen.mp4             世界模型输出
+│   ├── edit/candidate_seed{1..4}.png    ref.png (frame 0 given to the world model)
+│   ├── prompt_video.txt  prompt_ref.txt  edit_prompt.txt
+│   ├── video/street_gen.mp4             world-model output
 │   ├── tex_<prop>/
-│   │   ├── frames/  silhouette/  align.json        视频帧，以及对齐结果（小道具）
-│   │   ├── ref_rgba.png  ref.json                  Hunyuan 参考图、选中的帧和方位角
-│   │   ├── hunyuan/textured_world.obj  textured_hunyuan.jpg   Hunyuan 贴图（mesh 已转回世界坐标）
-│   │   ├── proj/albedo_fused.png       ← 最终贴图（用 textured_world.obj 的 UV）
+│   │   ├── frames/  silhouette/  align.json        video frames and the alignment result (small props)
+│   │   ├── ref_rgba.png  ref.json                  Hunyuan reference image, chosen frame and azimuth
+│   │   ├── hunyuan/textured_world.obj  textured_hunyuan.jpg   Hunyuan texture (mesh moved back to world coordinates)
+│   │   ├── proj/albedo_fused.png       ← final texture (uses the UVs of textured_world.obj)
 │   │   ├── proj/albedo_projected.png  coverage.png  stats.json
 │   │   └── eval_l1.json
 │   └── render/                          {fused_unlit, hunyuan_lit}_{original, orbit}/  turntable_<prop>_{hunyuan, projected, fused}/
 ├── arcane_3x3.mp4   arcane_<style>_props.glb   l1_table.md
 ```
 
-## 哪些结果能逐位复现
+## What reproduces bit for bit
 
-| 步骤 | 确定性 |
+| Step | Determinism |
 |---|---|
-| 白模场景（几何、相机、mask、深度） | 确定。用 CPU 重新渲染（原实验用的是 GPU OptiX）后，`cameras.json` 和三个 `.obj` 逐字节相同；8000 多万个 mask/深度像素中只有十几个边缘像素不同；RGB 最大差 2/255 |
-| 对齐、选参考帧、投影、L1 | 确定（纯 CPU，OpenCV/NumPy） |
-| Qwen 第 0 帧 | 固定 seed，但 bf16 扩散在不同 GPU、驱动、库版本下不能保证逐位一致，所以默认直接用仓库里的 `ref.png` |
-| 世界模型、Hunyuan3D-Paint | 固定 seed（0）。同样的硬件和版本下结果应该一致；换了硬件或版本会有小差异，L1 数字应该接近，但不会逐位相同 |
+| White-box scene (geometry, cameras, masks, depth) | Deterministic. Re-rendered on CPU (the original used GPU OptiX), `cameras.json` and the three `.obj` files are byte-identical; out of more than 80 million mask/depth pixels only a dozen or so edge pixels differ; RGB differs by at most 2/255 |
+| Alignment, reference frame, projection, L1 | Deterministic (CPU only, OpenCV/NumPy) |
+| Qwen frame 0 | Fixed seed, but bf16 diffusion is not guaranteed to be bit-exact across GPUs, drivers and library versions, so by default the `ref.png` shipped in the repo is used |
+| World model, Hunyuan3D-Paint | Fixed seed (0). Results should match on the same hardware and versions; other hardware or versions give small differences, so the L1 numbers should come out close but not bit-identical |
 
-## 换成自己的场景和角色
+## Using your own scene and characters
 
-- **新角色/风格**：复制 `configs/street/jinx` 改两个 prompt，然后跑 `STYLES=<新目录名> REF=seed pipelines/arcane_demo.sh <GPU>`。先只跑 `STAGES="edit"`，看过 `runs/arcane_<name>/edit/` 里的候选后，把中意的 seed 写进 `seed` 文件，再跑后面的阶段。
-- **第 0 帧里道具要大**：图像编辑模型会忽略远处很小的道具，还会在前景自己编出箱子、桶。所以 prompt 要写明位置和数量，例如 "…becomes, in exactly that place and size, …"、"Do not add any extra crates, barrels or props anywhere else"。
-- **新道具**：在 `build_street_scene.py` 的 `ASSETS` 里给它一个 `pass_index`，脚本会自动导出 `<name>.obj` 和 `mask_<name>/`。然后在 `run_street.sh` 的 `ASSETS` 里加上它。大物体（画面里位置基本不漂）设 `ALIGN=0`，小物体保留对齐。
-- **覆盖率**：只有视频里看到过的面才会拿到视频颜色（这里是 25–46%），其余是颜色匹配过的 Hunyuan 贴图。要提高覆盖率，最直接的办法是让相机绕道具走一圈。
-- **光照**：投影出来的贴图里带着视频的光照，所以和视频对比时用 unlit（emission）渲染。要在新光照下使用，还需要一步去光照（delighting），本仓库没有做。
+- **A new character or style.** Copy `configs/street/jinx`, edit the two prompts, then run `STYLES=<new dir name> REF=seed pipelines/arcane_demo.sh <GPU>`. Run `STAGES="edit"` alone first, look at the candidates in `runs/arcane_<name>/edit/`, write the seed you like into the `seed` file, then run the remaining stages.
+- **Props must be large in frame 0.** The image-edit model ignores small, distant props and invents its own crates and barrels in the foreground. Spell out position and count in the prompt, e.g. "…becomes, in exactly that place and size, …" and "Do not add any extra crates, barrels or props anywhere else".
+- **A new prop.** Give it a `pass_index` in `ASSETS` in `build_street_scene.py`; the script then exports `<name>.obj` and `mask_<name>/` automatically. Add it to `ASSETS` in `run_street.sh` as well. Set `ALIGN=0` for large objects whose position barely drifts in the video, and keep alignment on for small ones.
+- **Coverage.** Only faces the video has seen get video colours (25–46% here); the rest is the colour-matched Hunyuan texture. The most direct way to raise coverage is to move the camera all the way around the prop.
+- **Lighting.** The projected textures carry the video's lighting, which is why they are rendered unlit (emission) when compared with the video. Using them under new lighting needs a delighting step, which this repo does not do.
 
-## 脚本一览
+## Scripts
 
-| 脚本 | 环境 | 作用 |
+| Script | Env | Purpose |
 |---|---|---|
-| `pipelines/arcane_demo.sh` | – | Arcane demo 端到端 |
-| `pipelines/house_demo.sh` | – | 小屋 demo 端到端 |
-| `scripts/build_street_scene.py` / `build_scene.py` | Blender | 搭白模、渲染 rgb/depth/mask、导出相机和 mesh |
-| `scripts/export_object.py` | Blender | 从已有场景再导出一个物体的 mesh 和 mask（如小屋场景的 Crate） |
-| `scripts/encode_video.py` | hy3d | PNG 序列 → H.264 |
-| `scripts/edit_image.py` | imgedit | Qwen-Image-Edit-2511 第 0 帧风格化 |
-| `scripts/paste_region.py` | hy3d | 只把编辑结果贴回某个物体的区域（用于小屋变体） |
-| `scripts/run_world_model.sh` | wananimate | 世界模型推理 |
-| `scripts/run_street.sh` | – | 一个风格的所有道具：贴图 + 渲染 + 转台 + L1 |
-| `scripts/run_texture.sh` | – | 单个物体：对齐 → 参考帧 → Hunyuan → 投影 [→ 渲染 + L1] |
-| `scripts/align_object.py` | hy3d | 视频 ↔ 白模逐帧 2D 仿射对齐 |
-| `scripts/make_ref.py` | hy3d | 拆帧，选参考帧，抠图 |
-| `scripts/hy3d_texture.py` | hy3d | 调用 Hunyuan3D-Paint，负责坐标系换算 |
-| `scripts/project_frames.py` | hy3d | 视频帧 → UV 投影与融合 |
-| `scripts/render_assets.py` / `render_textured.py` / `render_all.sh` | Blender | 把贴好的模型放回白模场景渲染（原相机 / 环绕） |
-| `scripts/render_turntable.py` | Blender | 单个道具 360° 转台 |
-| `scripts/eval_l1.py` / `summarize_l1.py` | hy3d | masked L1 和汇总表 |
-| `scripts/compose_grid.py` | hy3d | 多路视频拼成带标签的网格 |
-| `scripts/export_glb.py` / `export_props_glb.py` | Blender | 导出 GLB（UE 和任何 glTF 查看器都能打开） |
+| `pipelines/arcane_demo.sh` | – | Arcane demo end to end |
+| `pipelines/house_demo.sh` | – | house demo end to end |
+| `scripts/build_street_scene.py` / `build_scene.py` | Blender | build the white box, render rgb/depth/mask, export cameras and meshes |
+| `scripts/export_object.py` | Blender | export one more object's mesh and mask from an existing scene (e.g. the Crate in the house scene) |
+| `scripts/encode_video.py` | hy3d | PNG sequence → H.264 |
+| `scripts/edit_image.py` | imgedit | stylise frame 0 with Qwen-Image-Edit-2511 |
+| `scripts/paste_region.py` | hy3d | paste an edit back only inside one object's region (used for the house variants) |
+| `scripts/run_world_model.sh` | wananimate | world-model inference |
+| `scripts/run_street.sh` | – | all props of one style: textures + renders + turntables + L1 |
+| `scripts/run_texture.sh` | – | one object: align → reference frame → Hunyuan → projection [→ render + L1] |
+| `scripts/align_object.py` | hy3d | per-frame 2D affine alignment, video ↔ white box |
+| `scripts/make_ref.py` | hy3d | extract frames, pick the reference frame, cut it out |
+| `scripts/hy3d_texture.py` | hy3d | call Hunyuan3D-Paint and handle the coordinate conversions |
+| `scripts/project_frames.py` | hy3d | video frames → UV projection and fusion |
+| `scripts/render_assets.py` / `render_textured.py` / `render_all.sh` | Blender | render the textured models back in the white-box scene (original cameras / orbit) |
+| `scripts/render_turntable.py` | Blender | 360° turntable of one prop |
+| `scripts/eval_l1.py` / `summarize_l1.py` | hy3d | masked L1 and the summary table |
+| `scripts/compose_grid.py` | hy3d | tile several videos into a labelled grid |
+| `scripts/export_glb.py` / `export_props_glb.py` | Blender | GLB export (opens in UE and any glTF viewer) |
 
-以上环境变量都有默认值：`OBJECT`（处理哪个物体，默认 `house`）、`VIEW_SELECT`、`REF_FRAME`、`ALIGN`、`FRAMES`、`NO_RENDER`、`REUSE_HUNYUAN`、`FRAME_STEP`。具体含义写在各脚本开头的注释里。
+These environment variables all have defaults: `OBJECT` (which object to process, default `house`), `VIEW_SELECT`, `REF_FRAME`, `ALIGN`, `FRAMES`, `NO_RENDER`, `REUSE_HUNYUAN`, `FRAME_STEP`. The comment at the top of each script explains them.
 
-## 早期实验：小屋 demo
+## Earlier experiment: the house demo
 
-这是更早的单物体测试：一个白模小屋加一个木箱，相机在小屋正面扫过约 110°。做了三个只改小屋外观的第 0 帧变体（奶油色、红砖、石头）。红砖和石头是在奶油色帧上再编辑一次，然后只把小屋区域贴回去，所以画面里其他像素完全相同。
+An earlier single-object test: a white-box cottage plus a crate, with the camera sweeping about 110° in front of the cottage. There are three frame-0 variants that change only the cottage's look (cream, brick, stone). Brick and stone are a second edit on top of the cream frame, pasted back only inside the cottage region, so every other pixel is identical.
 
 ```bash
 pipelines/house_demo.sh 0 1 2
 ```
 
-| 变体 | 物体 | 只用 Hunyuan（lit） | + 视频投影（unlit） | 对齐后 |
+| Variant | Object | Hunyuan only (lit) | + video projection (unlit) | Aligned |
 |---|---|---|---|---|
-| cream | 小屋 | 51.3 | **15.8** | – |
-| cream | 木箱 | 28.0 | 26.6 | 26.3 / **18.9** |
-| brick | 小屋 | 43.3 | **16.4** | – |
-| stone | 小屋 | 46.6 | **13.6** | – |
+| cream | house | 51.3 | **15.8** | – |
+| cream | crate | 28.0 | 26.6 | 26.3 / **18.9** |
+| brick | house | 43.3 | **16.4** | – |
+| stone | house | 46.6 | **13.6** | – |
 
-第 0 帧的 seed：奶油色 2，红砖 1，石头 1；贴回时 mask 膨胀 24 px。木箱这一行说明了为什么要做对齐：世界模型画的木箱和白模错开了 5–30 px，不对齐时投影几乎没有帮助。
+Frame-0 seeds: cream 2, brick 1, stone 1; the paste-back mask is dilated by 24 px. The crate row shows why alignment matters: the world model draws the crate 5–30 px away from the white box, and without alignment the projection barely helps.
 
-## 约定和已知限制
+## Conventions and known limitations
 
-- Blender 世界坐标 Z 轴朝上，单位米。`cameras.json` 存的是 Blender 的 c2w（相机看向 -Z）和针孔内参 K；深度 EXR 是平面深度（沿光轴）。
-- Hunyuan 的输入是 glTF 的 Y 轴朝上坐标系。它的 azim 0 相当于从 Blender 的 -Y 方向看过来，azim 增大时朝 +X 转。所以 `YAW = -theta(参考帧)` 会把参考视角放到 Hunyuan 的正面相机上。Hunyuan 总是用 xatlas 重新展 UV；`use_remesh=False` 时输出 mesh 会回到输入坐标系。
-- 白模小屋的屋顶表达不了茅草的厚度。全局颜色匹配会把没被看到的面往视频主色调拉，例如石屋背面偏黄绿。
+- Blender world coordinates are Z-up, in metres. `cameras.json` stores Blender's c2w (the camera looks down -Z) and the pinhole intrinsics K. The depth EXRs hold planar depth (along the optical axis).
+- Hunyuan takes input in glTF's Y-up frame. Its azim 0 looks from Blender's -Y side, and increasing azim turns towards +X. So `YAW = -theta(reference frame)` puts the reference view on Hunyuan's front camera. Hunyuan always re-unwraps UVs with xatlas; with `use_remesh=False` the output mesh comes back in the input frame.
+- The white-box cottage roof cannot represent the thickness of thatch. The global colour match pulls unseen faces towards the video's dominant colour; for example, the back of the stone cottage turns yellowish green.
 
-## 第三方组件与许可
+## Third-party components and licenses
 
-本仓库只包含胶水代码、prompt 和几张示例图，不包含任何模型权重。各组件按各自的许可使用：
+This repo contains only glue code, prompts and a few example images, and no model weights. Each component is used under its own license:
 
-- [Blender](https://www.blender.org/)：GPL。
-- [Hunyuan3D-2.1](https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1)：Tencent Hunyuan 3D 2.1 Community License，**不适用于欧盟、英国和韩国**。
-- [Wan2.2-Animate-2-14B](https://huggingface.co/Wan-AI/Wan2.2-Animate-2-14B) 和 [Qwen-Image-Edit-2511](https://huggingface.co/Qwen/Qwen-Image-Edit-2511)：使用前请查看各自模型卡上的许可。
-- GameRender 白模 LoRA：内部权重，不随本仓库分发。
-- 金克丝、蔚、凯特琳和《双城之战》/《英雄联盟》是 Riot Games 的 IP，这里只作为风格测试的 prompt。
+- [Blender](https://www.blender.org/): GPL.
+- [Hunyuan3D-2.1](https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1): Tencent Hunyuan 3D 2.1 Community License, which **does not apply in the EU, the UK or South Korea**.
+- [Wan2.2-Animate-2-14B](https://huggingface.co/Wan-AI/Wan2.2-Animate-2-14B) and [Qwen-Image-Edit-2511](https://huggingface.co/Qwen/Qwen-Image-Edit-2511): check the license on each model card before use.
+- GameRender white-box LoRA: internal weights, not distributed with this repo.
+- Jinx, Vi, Caitlyn, *Arcane* and *League of Legends* are Riot Games IP and are used here only as prompts for a style test.

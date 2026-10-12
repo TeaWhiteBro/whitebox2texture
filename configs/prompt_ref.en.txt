@@ -1,0 +1,1 @@
+A white-box rendered game frame that fully shows the scene's geometric layout and occlusion relationships; the camera viewpoint keeps changing.

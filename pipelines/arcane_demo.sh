@@ -27,7 +27,6 @@ STYLES=${STYLES:-jinx vi caitlyn}
 STAGES=${STAGES:-scene edit video texture compose}
 REF=${REF:-shipped}
 SCENE=$RUNS/street_v1
-PROMPT_REF="白盒渲染的游戏画面，完整呈现场景的几何布局与遮挡关系，画面中的角色在移动，相机视角持续变化。"
 mkdir -p "$RUNS/logs"
 source "$HERE/common.sh"
 
@@ -35,6 +34,7 @@ prepare() {
   local D=$RUNS/arcane_$1 C=$W2T_REPO/configs/street/$1
   mkdir -p "$D"
   cp "$C/edit_prompt.txt" "$C/prompt_video.txt" "$D/"
+  cp "$W2T_REPO/configs/street/prompt_ref.txt" "$D/"  # reference prompt that mentions the moving character
   [ "$REF" = shipped ] && cp "$C/ref.png" "$D/ref.png"
   return 0
 }
@@ -49,7 +49,7 @@ edit() {
 video() {
   local D=$RUNS/arcane_$1
   log "world model $1 (GPU $2)"
-  NAME=street PROMPT_REF="$PROMPT_REF" "$S/run_world_model.sh" "$SCENE" "$D" "$2" > "$D/world_model.log" 2>&1
+  NAME=street "$S/run_world_model.sh" "$SCENE" "$D" "$2" > "$D/world_model.log" 2>&1
 }
 
 texture() {
