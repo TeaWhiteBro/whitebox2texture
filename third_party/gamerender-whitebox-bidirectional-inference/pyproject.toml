@@ -1,0 +1,27 @@
+[project]
+name = "gamerender-whitebox-inference"
+version = "0.1.0"
+description = "White-box(白模) -> render video generation, bidirectional Wan2.2-Animate-2-14B LoRA inference-only package"
+requires-python = ">=3.10.1"
+dependencies = [
+    # 本地 DiffSynth-Studio（可编辑安装，包内已自带）
+    "diffsynth",
+    "pillow",
+    "tqdm",
+    # 显式声明 torch 以便指定 cuXXX 源；新机器若驱动版本不同请修改下方 index url
+    "torch>=2.6",
+    "torchvision",
+]
+
+[tool.uv.sources]
+diffsynth = { path = "diffsynth-studio", editable = true }
+# 本包打包时源机器 NVIDIA 驱动为 CUDA 12.8，如新机器驱动版本不同，
+# 请把下面两行以及 index url 改成匹配版本（如 cu121/cu124），
+# 或直接删除这两行+下方 index，让 pip/uv 自动选择默认 CUDA 版本的 torch。
+torch = [{ index = "pytorch-cu128" }]
+torchvision = [{ index = "pytorch-cu128" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true

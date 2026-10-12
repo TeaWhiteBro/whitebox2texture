@@ -1,0 +1,9 @@
+# 若不使用 uv，可用 pip 直接安装（先装 torch，再安装本地 diffsynth）
+# 1) 按新机器 CUDA 驱动版本，从 https://pytorch.org/get-started/locally/ 选择对应命令安装 torch/torchvision
+#    源打包机参考版本：torch==2.11.0+cu128, CUDA driver 570.133.20 (NVIDIA H200)
+#    例如 CUDA 12.8：
+#    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+# 2) 安装本地 diffsynth（可编辑模式，代码已包含在 diffsynth-studio/ 目录中）
+-e ./diffsynth-studio
+pillow
+tqdm
