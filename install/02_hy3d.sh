@@ -12,7 +12,7 @@ PIP="$PY_HY3D -m pip install --no-input"
 
 # conda-forge / nvidia channels only (no Anaconda defaults channel, so no ToS prompt)
 [ -x "$CUDA124_HOME/bin/nvcc" ] || $CONDA create -y -p "$CUDA124_HOME" --override-channels -c nvidia/label/cuda-12.4.1 cuda-toolkit=12.4.1
-[ -x "$PY_HY3D" ] || $CONDA create -y -p "$E" --override-channels -c conda-forge python=3.10
+[ -x "$PY_HY3D" ] || $CONDA create -y -p "$E" --override-channels -c conda-forge python=3.10.22
 
 if [ ! -d "$HY3D_REPO/.git" ]; then
   git clone https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1.git "$HY3D_REPO"

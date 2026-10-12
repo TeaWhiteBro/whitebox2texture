@@ -2,15 +2,15 @@
 # Env "wananimate": the white-box -> stylised video world model.
 #   base model  Wan-AI/Wan2.2-Animate-2-14B (public, ~47 GB, into $WAN_MODEL_DIR)
 #   LoRA + code GameRender package "gamerender-whitebox-bidirectional-inference" (LoRA animate2_base_scene00, step 2000,
-#               plus its DiffSynth-Studio copy). NOT public: get it from the GameRender team and unpack it at $GAMERENDER_REPO.
+#               plus its DiffSynth-Studio copy). Internal, ships in third_party/ of this private repo; do not redistribute.
 set -euo pipefail
 HERE=$(dirname "$(realpath "$0")")
 source "$HERE/../config.sh"
 E=$(dirname "$(dirname "$PY_WAN")")
 PIP="$PY_WAN -m pip install --no-input"
 [ -f "$GAMERENDER_REPO/scripts/infer.py" ] && [ -f "$WAN_LORA" ] || {
-  echo "missing GameRender package: expected $GAMERENDER_REPO/scripts/infer.py and $WAN_LORA" >&2; exit 1; }
-[ -x "$PY_WAN" ] || $CONDA create -y -p "$E" --override-channels -c conda-forge python=3.11
+  echo "missing GameRender package: expected $GAMERENDER_REPO/scripts/infer.py and $WAN_LORA (third_party/)" >&2; exit 1; }
+[ -x "$PY_WAN" ] || $CONDA create -y -p "$E" --override-channels -c conda-forge python=3.11.17
 $PIP torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu128
 grep -vE '^(#|torch==|torchvision==)' "$HERE/lock/wananimate.txt" > "$E/lock_rest.txt"
 $PIP -r "$E/lock_rest.txt"

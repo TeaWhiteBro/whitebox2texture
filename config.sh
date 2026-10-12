@@ -1,11 +1,13 @@
 # Paths shared by every script. Sourced, never executed.
-# Defaults put everything that install/*.sh downloads under $W2T_HOME (default: ./workspace, git-ignored).
+# Defaults put everything that install/*.sh downloads under $W2T_HOME (default: ./workspace, git-ignored); the GameRender
+# inference package (world-model LoRA + code) ships in third_party/.
 # To reuse existing installs, set any variable in config.local.sh (git-ignored) or in the environment.
 
 W2T_REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 [ -f "$W2T_REPO/config.local.sh" ] && source "$W2T_REPO/config.local.sh"
 
 : "${W2T_HOME:=$W2T_REPO/workspace}"
+[ -x "$W2T_HOME/conda/bin/conda" ] && : "${CONDA:=$W2T_HOME/conda/bin/conda}"     # installed by install/00_conda.sh
 : "${CONDA:=conda}"                                                   # used by install/*.sh only
 : "${BLENDER:=$W2T_HOME/tools/blender-4.5.14-linux-x64/blender}"
 : "${BLENDER_HOME:=$W2T_HOME/tools/blender_home}"                     # Blender needs a writable HOME
@@ -14,7 +16,7 @@ W2T_REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 : "${PY_IMGEDIT:=$W2T_HOME/envs/imgedit/bin/python}"                  # Qwen-Image-Edit (first frame)
 : "${PY_WAN:=$W2T_HOME/envs/wananimate/bin/python}"                   # world model
 : "${HY3D_REPO:=$W2T_HOME/third_party/Hunyuan3D-2.1}"
-: "${GAMERENDER_REPO:=$W2T_HOME/third_party/gamerender-whitebox-bidirectional-inference}"
+: "${GAMERENDER_REPO:=$W2T_REPO/third_party/gamerender-whitebox-bidirectional-inference}"  # ships in this repo
 : "${WAN_MODEL_DIR:=$W2T_HOME/models/Wan2.2-Animate-2-14B}"
 : "${WAN_LORA:=$GAMERENDER_REPO/checkpoints/animate2_base_scene00_lora/step-2000.safetensors}"
 : "${QWEN_EDIT_MODEL:=$W2T_HOME/models/Qwen-Image-Edit-2511}"

@@ -4,6 +4,8 @@ runs/
 config.local.sh
 __pycache__/
 *.pyc
+*.egg-info/
+third_party/*/outputs/
 *.blend1
 
 # gh writes its login here when HOME is unset; never commit it

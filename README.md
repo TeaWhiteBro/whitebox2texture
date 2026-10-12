@@ -70,10 +70,10 @@ Vi's crates barely improve because the world model painted an extra pile of crat
 
 ## Requirements
 
-- Linux x86_64 with an NVIDIA GPU. The reference machine has 8×H200 141 GB and driver 595.71.05. Every step uses a single GPU. The world model was measured at about 43 GB of VRAM (it has its own CPU offload). If Qwen does not fit in your VRAM, set `IMGEDIT_OFFLOAD=1`.
+- Linux x86_64 with an NVIDIA GPU and a driver for CUDA 12.8 or newer (R570+). The reference machine has 8×H200 141 GB and driver 595.71.05. Every step uses a single GPU. The world model was measured at about 43 GB of VRAM (it has its own CPU offload). If Qwen does not fit in your VRAM, set `IMGEDIT_OFFLOAD=1`.
 - **No root needed.** Everything is installed under `$W2T_HOME` (default `./workspace`). The system CUDA, PATH and shell profile are never touched. Conda uses only the `conda-forge` and `nvidia` channels.
-- A `conda` (Miniconda is enough), plus `git` and `curl`.
-- About 150 GB of disk:
+- Already on the machine: `git`, `curl`, `tar`/`xz`, and `g++` 13 or older (to compile Hunyuan's CUDA extensions against the CUDA 12.4 toolkit the installer brings). Blender also needs the usual X11/GL client libraries, even headless; `install/01_blender.sh` names the packages if any are missing. Conda is optional: without one, the installer puts Miniforge in `$W2T_HOME/conda`.
+- About 85 GB of disk, or 150 GB with the optional Qwen-Image-Edit:
 
 | Component | Size | Used for |
 |---|---|---|
@@ -81,29 +81,31 @@ Vi's crates barely improve because the world model painted an extra pile of crat
 | env `hy3d` + CUDA 12.4 toolkit prefix | 6.4 + 6.2 GB | Hunyuan3D-Paint and every CPU-side step |
 | Hunyuan3D-2.1 paint + DINOv2-giant + RealESRGAN | 15 GB | texture generation |
 | env `wananimate` + Wan2.2-Animate-2-14B | 7.3 + 47 GB | world model |
-| GameRender inference package (white-box LoRA) | 0.1 GB | world model. **Internal, not public**; see below |
+| GameRender inference package (white-box LoRA + code) | 0.1 GB | world model. **Internal**; ships in `third_party/`, see below |
 | env `imgedit` + Qwen-Image-Edit-2511 (optional) | 7.2 + 54 GB | only needed to regenerate frame 0 |
 
 ## Installation
 
 ```bash
-git clone <this repo> whitebox2texture && cd whitebox2texture
-
-# Optional: point at components that are already installed on this machine
-cp config.local.sh.example config.local.sh && vim config.local.sh
-
-bash install/00_blender.sh    # official tarball, sha256-checked
-bash install/01_hy3d.sh       # env + Hunyuan3D-2.1 (pinned to commit 82920d6) + two CUDA extensions + weights
-bash install/02_imgedit.sh    # optional: Qwen-Image-Edit-2511
-# Unpack the GameRender inference package to workspace/third_party/gamerender-whitebox-bidirectional-inference first
-# (or set GAMERENDER_REPO in config.local.sh)
-bash install/03_wan.sh        # env + Wan2.2-Animate-2-14B weights
-bash install/check.sh         # checks every component; continue only when all are ok
+git clone https://github.com/TeaWhiteBro/whitebox2texture.git && cd whitebox2texture
+bash install/all.sh           # about an hour on a fast connection; ends with install/check.sh, which must print all ok
 ```
 
-- All paths live in `config.sh`. Each one can be overridden by an environment variable or in `config.local.sh`.
-- `install/lock/*.txt` are `pip freeze` dumps of the reference environments, and the install scripts install those exact versions.
-- **The world model** is the GameRender project's inference package `gamerender-whitebox-bidirectional-inference`: a Wan2.2-Animate-2-14B bidirectional-attention base plus a rank-32 LoRA, `animate2_base_scene00/step-2000`, trained on paired white-box → render data. The package is not public; ask the GameRender team for it. Any other "white-box video + frame 0 → styled video" model works as a replacement, as long as it writes `<style>/video/<name>_gen.mp4` (81 frames, 832×480, frame-aligned with the white box). Every later step depends only on that file.
+`install/all.sh` checks the prerequisites above and then runs these steps (each can also be run on its own):
+
+| Script | What it installs |
+|---|---|
+| `install/00_conda.sh` | nothing if a `conda` is found; otherwise Miniforge 26.7.2 (sha256-checked) into `$W2T_HOME/conda` |
+| `install/01_blender.sh` | Blender 4.5.14 LTS, official tarball, sha256-checked |
+| `install/02_hy3d.sh` | env `hy3d`, Hunyuan3D-2.1 pinned to commit 82920d6, its two CUDA extensions, Hunyuan/DINOv2/RealESRGAN weights |
+| `install/03_wan.sh` | env `wananimate`, the shipped GameRender package's DiffSynth-Studio, Wan2.2-Animate-2-14B weights |
+| `install/04_imgedit.sh` | only with `WITH_IMGEDIT=1`: env `imgedit` and Qwen-Image-Edit-2511, needed only for `REF=seed` |
+| `install/check.sh` | checks every component, downloads nothing |
+
+- All paths live in `config.sh`. Each one can be overridden by an environment variable or in `config.local.sh` (see `config.local.sh.example`), e.g. to reuse components that are already installed.
+- `install/lock/*.txt` are `pip freeze` dumps of the reference environments, and the install scripts install those exact versions; the Python versions are pinned too.
+- Every download is public and anonymous (download.blender.org, GitHub, PyPI, download.pytorch.org, conda-forge, Hugging Face). No account or token is needed.
+- **The world model** is the GameRender project's inference package `gamerender-whitebox-bidirectional-inference`: a Wan2.2-Animate-2-14B bidirectional-attention base plus a rank-32 LoRA, `animate2_base_scene00/step-2000` (sha256 `28008ee7…fc1790`), trained on paired white-box → render data. It is internal and ships unmodified in `third_party/` (without the base model, which `03_wan.sh` downloads). Any other "white-box video + frame 0 → styled video" model works as a replacement, as long as it writes `<style>/video/<name>_gen.mp4` (81 frames, 832×480, frame-aligned with the white box). Every later step depends only on that file.
 - `03_wan.sh` also downloads `Wan2.1_VAE.pth` from `Wan-AI/Wan2.2-Animate-14B`. The `vae.pth` shipped in the Animate-2 repo is not the file the GameRender loader expects. DiffSynth identifies models by hash, and the wrong file fails with `Cannot detect the model type`.
 
 ## Reproducing the Arcane demo
@@ -240,5 +242,5 @@ This repo contains only glue code, prompts and a few example images, and no mode
 - [Blender](https://www.blender.org/): GPL.
 - [Hunyuan3D-2.1](https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1): Tencent Hunyuan 3D 2.1 Community License, which **does not apply in the EU, the UK or South Korea**.
 - [Wan2.2-Animate-2-14B](https://huggingface.co/Wan-AI/Wan2.2-Animate-2-14B) and [Qwen-Image-Edit-2511](https://huggingface.co/Qwen/Qwen-Image-Edit-2511): check the license on each model card before use.
-- GameRender white-box LoRA: internal weights, not distributed with this repo.
+- GameRender inference package (`third_party/gamerender-whitebox-bidirectional-inference`, white-box LoRA + code): internal; it is included only for collaborators of this private repo and must not be redistributed. Its DiffSynth-Studio copy is Apache-2.0 (`diffsynth-studio/LICENSE`).
 - Jinx, Vi, Caitlyn, *Arcane* and *League of Legends* are Riot Games IP and are used here only as prompts for a style test.

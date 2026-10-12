@@ -1,4 +1,4 @@
-# pip freeze of the reference env (H200, driver 595.71.05). Installed by install/01_hy3d.sh; custom_rasterizer and the
+# pip freeze of the reference env (H200, driver 595.71.05). Installed by install/02_hy3d.sh; custom_rasterizer and the
 # mesh painter are built from the Hunyuan3D-2.1 checkout (commit 82920d6), not from PyPI.
 absl-py==2.5.0
 accelerate==1.1.1

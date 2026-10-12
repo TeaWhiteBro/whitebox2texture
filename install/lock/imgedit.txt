@@ -1,4 +1,4 @@
-# pip freeze of the reference env. Installed by install/02_imgedit.sh.
+# pip freeze of the reference env. Installed by install/04_imgedit.sh.
 accelerate==1.15.0
 annotated-doc==0.0.5
 anyio==4.15.1

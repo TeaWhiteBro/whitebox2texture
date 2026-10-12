@@ -6,7 +6,7 @@ HERE=$(dirname "$(realpath "$0")")
 source "$HERE/../config.sh"
 E=$(dirname "$(dirname "$PY_IMGEDIT")")
 PIP="$PY_IMGEDIT -m pip install --no-input"
-[ -x "$PY_IMGEDIT" ] || $CONDA create -y -p "$E" --override-channels -c conda-forge python=3.11
+[ -x "$PY_IMGEDIT" ] || $CONDA create -y -p "$E" --override-channels -c conda-forge python=3.11.16
 $PIP torch==2.9.1 torchvision==0.24.1 --index-url https://download.pytorch.org/whl/cu128
 grep -vE '^(#|torch==|torchvision==)' "$HERE/lock/imgedit.txt" > "$E/lock_rest.txt"
 $PIP -r "$E/lock_rest.txt"
